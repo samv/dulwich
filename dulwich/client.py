@@ -205,55 +205,7 @@ class GitClient(object):
             determine_wants = target.object_store.determine_wants_all
 
         if self._thin_packs:
-            def read_all_gen(buf):
-                size = yield ""
-                while size:
-                    size_left = size
-                    ret = ""
-                    while len(buf) and size_left > 0:
-                        if len(buf[0]) > size_left:
-                            chunk = buf[0][:size_left]
-                            buf[0] = buf[0][size_left:]
-                        else:
-                            chunk = buf[0]
-                            del buf[0]
-                        ret += chunk
-                        size_left -= len(chunk)
-                    size = yield ret
-            ringbuf = []
-            saw_data = False
-            def push_ringbuf(data):
-                saw_data = True
-                ringbuf.append(data)
-
-            fd, _path = tempfile.mkstemp(
-                dir=target.object_store.path,
-                prefix='tmp_pack_',
-            )
-            f = os.fdopen(fd, 'w+b')
-            indexer = PackIndexer(
-                f, resolve_ext_ref=target.object_store.get_raw,
-            )
-            gen = read_all_gen(ringbuf)
-            gen.send(None)
-            def read_all(size):
-                ret = gen.send(size)
-                if len(ret) == 0:
-                    return ""
-
-            copier = PackStreamCopier(
-                read_all, read_all, f, delta_iter=indexer,
-            )
-            write_cb = push_ringbuf
-            def commit():
-                try:
-                    if saw_data:
-                        copier.verify()
-                        target.object_store._complete_thin_pack(
-                            f, _path, copier, indexer,
-                        )
-                finally:
-                    f.close()
+            write_cb, commit = target.object_store.add_thin_pack_rev()
         else:
             f, commit = target.object_store.add_pack()
             write_cb = f.write
@@ -263,6 +215,8 @@ class GitClient(object):
                 path, determine_wants,
                 target.get_graph_walker(), write_cb, progress
             )
+        #except Exception, e:
+            #print "Exception fetching: {0}".format(repr(e))
         finally:
             commit()
 
